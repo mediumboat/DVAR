@@ -9,7 +9,9 @@ from pathlib import Path
 from parameter import *
 import csrgraph as cg
 from metapath2vec import Metapath2VecTrainer
-
+from DVAR_model import *
+import numpy_indexed as npi
+import math
 
 def prepare(data_path=Path(DATA_PATH)):
     print("___Loading data___",end="")
@@ -173,26 +175,132 @@ def prepare(data_path=Path(DATA_PATH)):
 
 
 
-    def train(data_path=Path(DATA_PATH)):
-        node_embeddings = np.load(data_path/"emb.npy")
-        train_x = np.loadtxt(data_path / "train_meta_path.x", dtype=np.ushort)
-        train_y = np.loadtxt(data_path / "train_meta_path.y", dtype=np.ushort)
-        val_x = np.loadtxt(data_path / "val.x", dtype=np.ushort)
-        val_y = np.loadtxt(data_path / "val.y", dtype=np.ushort)
-        test_x = np.loadtxt(data_path / "test.x", dtype=np.ushort)
-        test_y = np.loadtxt(data_path / "test.y", dtype=np.ushort)
+def train_test(data_path=Path(DATA_PATH)):
+    metrics = -9999.9
+    node_embeddings = np.load(data_path/"emb.npy")
+    train_x = np.loadtxt(data_path / "train_meta_path.x", dtype=np.ushort)
+    train_y = np.loadtxt(data_path / "train_meta_path.y", dtype=np.ushort)
+    val_x = np.loadtxt(data_path / "val.x", dtype=np.ushort)
+    val_y = np.loadtxt(data_path / "val.y", dtype=np.ushort)
+    test_x = np.loadtxt(data_path / "test.x", dtype=np.ushort)
+    test_y = np.loadtxt(data_path / "test.y", dtype=np.ushort)
+    UICI = np.loadtxt(data_path / "UICI.path", dtype=np.ushort)
+    UUUI = np.loadtxt(data_path / "UUUI.path", dtype=np.ushort)
+    UIUI = np.loadtxt(data_path / "UIUI.path", dtype=np.ushort)
+    UIII = np.loadtxt(data_path / "UIII.path", dtype=np.ushort)
+    UII = np.loadtxt(data_path / "UII.path", dtype=np.ushort)
+    UUI = np.loadtxt(data_path / "UUI.path", dtype=np.ushort)
+    meta_path = [UICI, UUUI, UIUI, UIII, UII, UUI]
+    item_cate = np.loadtxt(data_path / "item_cate.link", dtype=np.ushort)
+    model = DVARModel(node_embeddings, item_cate, meta_path)
+    train_data = tf.data.Dataset.from_tensor_slices((train_x, train_y)).shuffle(128)
+    for epochs in range(EPOCHS):
+        for x, y in train_data.batch(BATCH_SIZE):
+            model.custom_train((x, y))
+        test_scores = np.zeros((6, val_x.shape[0], 3))
+        for mp in range(6):
+            test_scores[mp, :, :2] = val_x
+        for mp in range(6):
+            type = np.zeros((val_x.shape[0])) + mp
+            test_data = tf.data.Dataset.from_tensor_slices((val_x[:, 0], val_x[:, 1], type)).batch(BATCH_SIZE)
+            y_hat = None
+            for th, tt, tp in test_data:
+                y_hat_batch = model((th, tt, tp)).numpy().flatten()
+                if y_hat is None:
+                    y_hat = y_hat_batch
+                else:
+                    y_hat = np.concatenate((y_hat, y_hat_batch))
+            test_scores[mp, :, 2] = y_hat
+        # test_scores = np.max(test_scores[:, :, 2], 0).reshape((-1, 1))
+        test_scores = np.mean(test_scores[:, :, 2], 0).reshape((-1, 1))
+        scores = np.hstack((val_x, test_scores))
+        test_users = val_x[:, 0]
+        top_10_rec = np.zeros((test_users.shape[0] * 10, 2))
+        i = 0
+        for uid in test_users:
+            tdata = scores[np.where(scores[:, 0] == uid)]
+            tdata_top_10 = tdata[np.lexsort(-tdata.T)]
+            top_10_rec[i:i + 10, :] = tdata_top_10[:10, :2]
+            i += 10
+        test_ground_truth = val_x[np.where(val_y == 1)[0], :]
+        hit = npi.intersection(top_10_rec, test_ground_truth)
+        n_hit = hit.shape[0]
+        prec = n_hit / top_10_rec.shape[0]
+        recall = n_hit / test_ground_truth.shape[0]
+        ndcg_all = []
+        for i in test_users.shape[0]:
+            k = i * 10
+            uid_hit = top_10_rec[k:k + 10, :].astype(int)
+            idx = npi.indices(val_x, uid_hit, axis=0)
+            y_unsort = test_y[idx]
+            dcg = calculate_cg(y_unsort)
+            y_sort = np.sort(y_unsort)[::-1]
+            idcg = calculate_cg(y_sort)
+            ndcg_i = dcg / idcg
+            ndcg_all.append(ndcg_i)
+        ndcg = np.nanmean(ndcg_all)
+        if prec + recall + ndcg > metrics:
+            metrics = prec + recall + ndcg
+            model.save("saved_model")
+    optim_model = tf.keras.models.load_model("saved_model", compile=False)
+    test_scores = np.zeros((6, test_x.shape[0], 3))
+    for mp in range(6):
+        test_scores[mp, :, :2] = test_x
+    for mp in range(6):
+        type = np.zeros((test_x.shape[0])) + mp
+        test_data = tf.data.Dataset.from_tensor_slices((test_x[:, 0], test_x[:, 1], type)).batch(BATCH_SIZE)
+        y_hat = None
+        for th, tt, tp in test_data:
+            y_hat_batch = model((th, tt, tp)).numpy().flatten()
+            if y_hat is None:
+                y_hat = y_hat_batch
+            else:
+                y_hat = np.concatenate((y_hat, y_hat_batch))
+        test_scores[mp, :, 2] = y_hat
+    # test_scores = np.max(test_scores[:, :, 2], 0).reshape((-1, 1))
+    test_scores = np.mean(test_scores[:, :, 2], 0).reshape((-1, 1))
+    scores = np.hstack((test_x, test_scores))
+    test_users = test_x[:, 0]
+    top_10_rec = np.zeros((test_users.shape[0] * 10, 2))
+    i = 0
+    for uid in test_users:
+        tdata = scores[np.where(scores[:, 0] == uid)]
+        tdata_top_10 = tdata[np.lexsort(-tdata.T)]
+        top_10_rec[i:i + 10, :] = tdata_top_10[:10, :2]
+        i += 10
+    test_ground_truth = test_x[np.where(val_y == 1)[0], :]
+    hit = npi.intersection(top_10_rec, test_ground_truth)
+    n_hit = hit.shape[0]
+    prec = n_hit / top_10_rec.shape[0]
+    recall = n_hit / test_ground_truth.shape[0]
+    ndcg_all = []
+    for i in test_users.shape[0]:
+        k = i * 10
+        uid_hit = top_10_rec[k:k + 10, :].astype(int)
+        idx = npi.indices(test_x, uid_hit, axis=0)
+        y_unsort = test_y[idx]
+        dcg = calculate_cg(y_unsort)
+        y_sort = np.sort(y_unsort)[::-1]
+        idcg = calculate_cg(y_sort)
+        ndcg_i = dcg / idcg
+        ndcg_all.append(ndcg_i)
+    ndcg = np.nanmean(ndcg_all)
+    return prec, recall, ndcg
 
 
 
-
-
-
-
-
-
-
+def calculate_cg(list):
+    sum = 0
+    i = 0
+    for e in list:
+        i = i + 1
+        r = e/(math.log2(i + 1))
+        sum = sum + r
+    return sum
 
 
 
 if __name__ == "__main__":
     prepare()
+    prec, recall, ndcg = train_test()
+    print(" / ".join(str(x) for x in [prec, recall, ndcg]))

@@ -8,6 +8,8 @@ FAISS_N_LIST_I = 10
 FAISS_N_LIST_U = 5
 N_WALK_4 = 10000
 N_WALK_3 = 10000
+BATCH_SIZE = 5000
+EPOCHS = 100
 
 parser = argparse.ArgumentParser(description="Metapath2vec")
 parser.add_argument('--path', type=str, default="../data/ml/meta.path" ,help="input_path")

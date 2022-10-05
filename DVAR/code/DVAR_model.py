@@ -125,6 +125,8 @@ class DVARModel(tf.keras.Model, ABC):
         self.dense2 = tf.keras.layers.Dense(DIMENSION)
         self.meta_path_embdding = None
 
+
+
     def call(self, inputs, training=None, mask=None):
         user, item, path = inputs
         h_uici = self.BaseModel(self.UICI)
@@ -147,8 +149,8 @@ class DVARModel(tf.keras.Model, ABC):
         return tf.squeeze(result)
 
     def compile(self,
-              optimizer='rmsprop',
-              loss=None,
+              optimizer=tf.keras.optimizers.Adam(),
+              loss=tf.keras.losses.BCE(),
               metrics=None,
               loss_weights=None,
               weighted_metrics=None,
@@ -158,7 +160,7 @@ class DVARModel(tf.keras.Model, ABC):
         self.optimizer = optimizer
         self.loss = loss
 
-    def train_step(self, data):
+    def custom_train(self, data):
         x, y = data
         user = x[:, 0]
         item = x[:, 1]
@@ -169,7 +171,6 @@ class DVARModel(tf.keras.Model, ABC):
                    LAMBDA_FILM * (tf.nn.l2_loss(self.alpha_u_i-1) + tf.nn.l2_loss(self.beta_u_i))
         grads = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        return {"training_loss": loss}
 
 
 
