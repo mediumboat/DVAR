@@ -29,3 +29,8 @@
 ## 4. Datasets
 
 The datasets could be downloaded from the links in the paper (a sample data is provided in the repository), readers should also modify the "DVAR_data_loader.py" if they use their custom dataset. Please refer to the sample data for the input format.
+
+
+## 5. Other Instructions
+
+This model utilize `metapath2vec` for feature initiliazation, readers can also have their own implementation to produce node features (i.e., ` node_embeddings` in DVAR_train.py).
