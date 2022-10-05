@@ -28,4 +28,4 @@
 
 ## 4. Datasets
 
-The datasets could be downloaded from the links in the paper (a sample data is provided in the repository), readers should also modify the "DVAR_data_loader.py" if they use custom dataset.
+The datasets could be downloaded from the links in the paper (a sample data is provided in the repository), readers should also modify the "DVAR_data_loader.py" if they use their custom dataset.
